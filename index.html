@@ -24,8 +24,12 @@
         .issue-item { margin-bottom: 8px; padding: 10px 12px; border-radius: 4px; border-left: 4px solid; }
         .sev-critical { border-left-color: var(--crit); background: rgba(255, 59, 48, 0.08); }
         .sev-warning { border-left-color: var(--warn); background: rgba(255, 204, 0, 0.05); }
+        .sev-stale { border-left-color: var(--stale); background: rgba(255, 255, 255, 0.02); }
 
-        .instruction { display: block; font-size: 0.9rem; font-weight: bold; }
+        .instruction-box { display: flex; justify-content: space-between; align-items: center; }
+        .instruction { font-size: 0.9rem; font-weight: bold; }
+        .srv-time { font-size: 0.8rem; opacity: 0.7; }
+        .sev-stale .instruction { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
@@ -61,7 +65,10 @@
                             ${dev.Status === 'Green' ? '<div style="color:var(--good); font-size:0.8rem;">✓ Online</div>' : 
                                 dev.IssuesList.map(issue => `
                                     <div class="issue-item sev-${issue.severity}">
-                                        <span class="instruction">${issue.label}</span>
+                                        <div class="instruction-box">
+                                            <span class="instruction">${issue.label}</span>
+                                            <span class="srv-time">${issue.time || ''}</span>
+                                        </div>
                                     </div>
                                 `).join('')
                             }
