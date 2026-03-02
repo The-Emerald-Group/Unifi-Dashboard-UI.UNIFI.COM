@@ -103,7 +103,11 @@ def fetch_modern_unifi():
                         try:
                             diff_sec = (current_time - last_seen_dt).total_seconds()
                             offline_str = format_duration(diff_sec)
-                        except: pass
+                        except: 
+                            offline_str = ">30d"
+                    else:
+                        # FALLBACK: If API has completely purged the timestamp
+                        offline_str = ">30d"
                 
                 inventory.append({
                     "name": d.get("name") or d.get("mac"),
@@ -191,17 +195,18 @@ def fetch_classic_unifi():
                 if is_offline:
                     offline_count += 1
                     
-                    # Classic API might clear last_seen if it's been offline too long.
-                    # We check last_disconnect as a backup.
                     last_seen = dev.get('last_seen') or dev.get('last_disconnect')
                     
                     if last_seen:
                         try:
-                            # Ensure we parse it safely
                             diff_sec = (current_time - datetime.fromtimestamp(float(last_seen), timezone.utc)).total_seconds()
                             offline_str = format_duration(diff_sec)
                         except Exception as time_err:
                             log(f"Time parsing warning for {d_name}: {time_err}")
+                            offline_str = ">30d"
+                    else:
+                        # FALLBACK: If API has completely purged the timestamp
+                        offline_str = ">30d"
 
                     if dev.get('type') == 'ugw':
                         status = "Red"; weight = 20
