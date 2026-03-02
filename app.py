@@ -18,94 +18,107 @@ def log(msg):
 
 def harvest_data():
     if not API_KEY:
-        log("!! ERROR: UNIFI_API_KEY environment variable is missing!")
+        log("!! ERROR: UNIFI_API_KEY is missing!")
         return
 
     headers = {"X-API-KEY": API_KEY, "Accept": "application/json"}
 
     while True:
         try:
-            log(">>> Starting Combined UniFi V1 Harvest...")
+            log(">>> Starting Final Unified UniFi Harvest...")
             
-            # 1. Fetch Friendly Site Names
-            sites_res = requests.get(f"{BASE_URL}/sites", headers=headers, timeout=30)
-            sites_res.raise_for_status()
-            sites_data = sites_res.json().get('data', [])
-
-            # 2. Fetch Device Hardware
+            # 1. Fetch Master Device List (Friendly Names + Inventory)
             dev_res = requests.get(f"{BASE_URL}/devices", headers=headers, timeout=30)
             dev_res.raise_for_status()
-            devices_data = dev_res.json().get('data', [])
+            devices_raw = dev_res.json().get('data', [])
 
-            # Group hardware by Site ID
-            inventory_map = {}
-            for d in devices_data:
-                sid = d.get('siteId')
-                if sid:
-                    if sid not in inventory_map: inventory_map[sid] = []
-                    inventory_map[sid].append({
-                        "name": d.get("name") or d.get("mac"),
-                        "model": d.get("productName") or "UniFi Device",
-                        "status": str(d.get("status", "")).upper()
-                    })
+            # 2. Fetch Health Statistics (Offline counts + ISP Issues)
+            sites_res = requests.get(f"{BASE_URL}/sites", headers=headers, timeout=30)
+            sites_res.raise_for_status()
+            sites_raw = sites_res.json().get('data', [])
+
+            # Map site health by hostId
+            site_health_map = {s.get('hostId'): s for s in sites_raw if s.get('hostId')}
 
             final_cards = []
-            current_time = datetime.now(timezone.utc)
 
-            for site in sites_data:
-                site_id = site.get('id')
-                name = site.get('name') or "Unnamed Site"
-                site_inventory = inventory_map.get(site_id, [])
+            for host_group in devices_raw:
+                host_id = host_group.get('hostId')
+                name = host_group.get('hostName') or "Unnamed Site"
+                devices_list = host_group.get('devices', [])
+                
+                # Get the health stats for this specific host
+                stats = site_health_map.get(host_id, {}).get('statistics', {})
+                counts = stats.get('counts', {})
                 
                 status = "Green"
                 weight = 0
                 issues = []
-                
-                # Check for Site-Level Offline Status
-                last_seen_str = site.get('reportedAt')
-                time_display = ""
-                if last_seen_str:
-                    try:
-                        clean_ts = last_seen_str.replace("Z", "+00:00")
-                        last_seen = datetime.fromisoformat(clean_ts)
-                        diff_mins = (current_time - last_seen).total_seconds() / 60
-                        
-                        if diff_mins > 2880: time_display = f"{int(diff_mins / 1440)}d ago"
-                        else:
-                            h, m = divmod(int(diff_mins), 60)
-                            time_display = f"{h}h {m}m ago" if h > 0 else f"{m}m ago"
-                        
-                        # If site hasn't checked in for 15 mins, mark Red
-                        if diff_mins > 15:
-                            status = "Red"
-                            weight = 10 if diff_mins < 1440 else 5
-                            issues.append({"label": "🚨 SITE OFFLINE", "time": time_display, "severity": "critical"})
-                    except: pass
+                inventory = []
 
-                # Check for Health Alerts
-                alerts = site.get('statistics', {}).get('alerts', 0)
-                if alerts > 0 and status != "Red":
-                    status = "Yellow"
-                    weight = 2
-                    issues.append({"label": f"⚠️ {alerts} Active Alerts", "time": "Active", "severity": "warning"})
+                # Build Inventory and check for Gateway (Red) status
+                for d in devices_list:
+                    dev_status = str(d.get('status', 'unknown')).lower()
+                    inventory.append({
+                        "name": d.get("name") or d.get("mac"),
+                        "model": d.get("model") or "UniFi Device",
+                        "status": dev_status.upper()
+                    })
+
+                    # 🔴 CRITICAL: Main Gateway/Console is Offline
+                    if d.get('isConsole') and dev_status != "online":
+                        status = "Red"
+                        weight = 20
+                        issues.append({"label": "🚨 GATEWAY OFFLINE", "time": "Critical", "severity": "critical"})
+
+                # 🟡 WARNING: Check for sub-device outages or ISP issues if not already Red
+                if status != "Red":
+                    offline_count = counts.get('offlineDevice', 0)
+                    critical_notifs = counts.get('criticalNotification', 0)
+                    
+                    # check for internet issues in statistics
+                    internet_issues = stats.get('internetIssues', [])
+                    wan_data = stats.get('wans', {}).get('WAN', {})
+                    wan_issues = wan_data.get('wanIssues', [])
+
+                    if offline_count > 0:
+                        status = "Yellow"
+                        weight = 10
+                        issues.append({"label": f"⚠️ {offline_count} Device(s) Offline", "time": "Partial Outage", "severity": "warning"})
+                    
+                    if internet_issues or wan_issues:
+                        status = "Yellow"
+                        if weight < 5: weight = 5
+                        issues.append({"label": "📡 ISP/Latency Issues", "time": "Check ISP", "severity": "warning"})
+
+                    if critical_notifs > 0:
+                        status = "Yellow"
+                        if weight < 8: weight = 8
+                        issues.append({"label": f"🔔 {critical_notifs} System Alert(s)", "time": "Action Required", "severity": "warning"})
 
                 final_cards.append({
                     "SiteName": name,
-                    "Inventory": site_inventory,
+                    "Inventory": inventory,
                     "Status": status,
                     "IssuesCount": weight,
                     "IssuesList": issues
                 })
 
-            # Sort: Problems first, then alphabetical
+            # Sort: Priority (Offline > Warning > Healthy) then Alphabetical
             final_cards.sort(key=lambda x: (-x['IssuesCount'], x['SiteName']))
             
+            payload = {
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "sites": final_cards
+            }
+            
             with open(DATA_FILE, "w", encoding="utf-8") as f:
-                json.dump({"timestamp": datetime.now().strftime("%H:%M:%S"), "sites": final_cards}, f, indent=4)
-            log(f"*** SUCCESS: Processed {len(final_cards)} sites ***")
+                json.dump(payload, f, indent=4)
+            log(f"*** HARVEST SUCCESS: Processed {len(final_cards)} sites ***")
             
         except Exception as e:
             log(f"!! ERROR: {str(e)}")
+            traceback.print_exc()
         
         time.sleep(POLL_INTERVAL)
 
