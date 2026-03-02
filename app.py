@@ -30,8 +30,7 @@ def harvest_data():
         try:
             log(">>> Starting UniFi API Harvest...")
             
-            # Fetch devices across all sites
-            # Note: We use the /ea/devices endpoint as it usually aggregates status well.
+            # Fetch gateways/consoles
             res = requests.get(f"{BASE_URL}/ea/devices", headers=headers, timeout=30)
             res.raise_for_status()
             devices_data = res.json().get('data', [])
@@ -39,54 +38,49 @@ def harvest_data():
             wallboard_data = {}
 
             for dev in devices_data:
-                # Group by site name (fallback to 'Unknown Site' if missing)
-                site_name = dev.get("site", {}).get("name") or dev.get("siteName") or "Unknown Site"
+                # The Gateway IS the site/customer. Let's get its name.
+                name = dev.get("name") or dev.get("hostName") or dev.get("mac") or "Unnamed Gateway"
                 
-                if site_name not in wallboard_data:
-                    wallboard_data[site_name] = {
-                        "SiteName": site_name, 
+                # Try to grab the hardware model (e.g., UDM-Pro, Cloud Gateway Ultra)
+                model = dev.get("productName") or dev.get("hardwareName") or dev.get("hardwareId") or "UniFi Gateway"
+                
+                # Each gateway gets its own card
+                if name not in wallboard_data:
+                    wallboard_data[name] = {
+                        "DeviceName": name, 
+                        "Model": model,
                         "Status": "Green", 
-                        "TotalDevices": 0, 
                         "IssuesCount": 0, 
                         "IssuesList": []
                     }
                 
-                wallboard_data[site_name]["TotalDevices"] += 1
-                
-                # Determine device state
-                # UniFi often uses 'status' or 'state' fields. 
+                # UniFi often uses 'status' or 'state'
                 state = str(dev.get("status", dev.get("state", "UNKNOWN"))).upper()
-                name = dev.get("name", dev.get("mac", "Unnamed Device"))
                 
-                # Define logic for Red/Yellow/Green based on UniFi's native states
+                # Logic for Red/Yellow/Green
                 if state in ["OFFLINE", "DISCONNECTED", "ADOPTION_FAILED"]:
-                    wallboard_data[site_name]["Status"] = "Red"
-                    wallboard_data[site_name]["IssuesCount"] += 2
-                    wallboard_data[site_name]["IssuesList"].append({
-                        "name": name,
-                        "time": "Currently Offline", # UniFi doesn't always provide an exact 'last seen' in the main list
-                        "label": f"🚨 {state}",
+                    wallboard_data[name]["Status"] = "Red"
+                    wallboard_data[name]["IssuesCount"] += 2
+                    wallboard_data[name]["IssuesList"].append({
+                        "label": f"🚨 OFFLINE",
                         "severity": "critical"
                     })
-                elif state in ["UPDATING", "PROVISIONING", "PENDING"]:
-                    # If it's already Red, don't downgrade the whole site card to Yellow
-                    if wallboard_data[site_name]["Status"] != "Red":
-                        wallboard_data[site_name]["Status"] = "Yellow"
+                elif state in ["UPDATING", "PROVISIONING", "PENDING", "DEGRADED"]:
+                    if wallboard_data[name]["Status"] != "Red":
+                        wallboard_data[name]["Status"] = "Yellow"
                     
-                    wallboard_data[site_name]["IssuesCount"] += 1
-                    wallboard_data[site_name]["IssuesList"].append({
-                        "name": name,
-                        "time": "In Progress",
+                    wallboard_data[name]["IssuesCount"] += 1
+                    wallboard_data[name]["IssuesList"].append({
                         "label": f"⏳ {state}",
                         "severity": "warning"
                     })
 
-            # Sort: Sites with the most issues at the top, then alphabetically
-            final_output = sorted(wallboard_data.values(), key=lambda x: (-x['IssuesCount'], x['SiteName']))
+            # Sort: Offline Gateways at the top, then alphabetically by Name
+            final_output = sorted(wallboard_data.values(), key=lambda x: (-x['IssuesCount'], x['DeviceName']))
             
             payload = {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "sites": final_output
+                "devices": final_output
             }
             
             with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -110,7 +104,7 @@ class MyHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w") as f: 
-            json.dump({"timestamp": "N/A", "sites": []}, f)
+            json.dump({"timestamp": "N/A", "devices": []}, f)
     
     threading.Thread(target=harvest_data, daemon=True).start()
     print("Web Server starting on port 8080...")
