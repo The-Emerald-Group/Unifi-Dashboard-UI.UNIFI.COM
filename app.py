@@ -33,7 +33,7 @@ SMTP_PORT = 25
 SMTP_USER = "alerts@emerald-group.local"
 SMTP_PASS = "CrazyF00l"
 EMAIL_FROM = "unifi-alerts@emerald-group.co.uk"
-EMAIL_TO = "alerts@emerald-group.co.uk"
+EMAIL_TO = "reports@emerald-group.co.uk"  # Updated Destination
 ALERT_THRESHOLD_SECONDS = 8 * 3600  # 8 Hours
 
 def log(msg):
@@ -70,7 +70,7 @@ Emerald IT UniFi Monitor
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
-    # Retry logic (similar to your PS script)
+    # Retry logic
     for attempt in range(1, 4):
         try:
             server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10)
