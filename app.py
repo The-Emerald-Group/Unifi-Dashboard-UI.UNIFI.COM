@@ -37,12 +37,14 @@ EMAIL_TO = os.environ.get("EMAIL_TO")
 ALERT_THRESHOLD_SECONDS = 8 * 3600  # 8 Hours
 
 # --- DATA STORAGE PATHS ---
-DATA_FILE = "data.json"  # <--- Back in the main folder so index.html works!
+DATA_FILE = "data.json"
+TEMP_DATA_FILE = "data.tmp.json" # <-- Added temporary file for atomic writes
 
 # --- PERMANENT DOCKER VOLUME STORAGE (For alerts only) ---
 DATA_DIR = "/unifi_data"
 os.makedirs(DATA_DIR, exist_ok=True)
 STATE_FILE = f"{DATA_DIR}/alerts_v2.json" 
+TEMP_STATE_FILE = f"{DATA_DIR}/alerts_v2.tmp.json" # <-- Added temporary file for atomic writes
 # ---------------------------------------------------------
 
 POLL_INTERVAL = 300 
@@ -479,11 +481,20 @@ def harvest_data():
         all_cards = modern_cards + classic_cards
         all_cards.sort(key=lambda x: (-x['IssuesCount'], x['SiteName']))
         
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
+        # --- ATOMIC WRITE IMPLEMENTATION ---
+        # 1. Write data to a temporary file first
+        with open(TEMP_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump({"timestamp": datetime.now().strftime("%H:%M:%S"), "sites": all_cards}, f, indent=4)
+        
+        # 2. Instantly replace the main file with the temporary file
+        os.replace(TEMP_DATA_FILE, DATA_FILE)
             
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        # Repeat the process for the state file
+        with open(TEMP_STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(alert_state, f)
+            
+        os.replace(TEMP_STATE_FILE, STATE_FILE)
+        # -----------------------------------
             
         log(f"*** HARVEST SUCCESS: Processed {len(modern_cards)} Modern + {len(classic_cards)} Classic sites ***")
         time.sleep(POLL_INTERVAL)
@@ -498,10 +509,13 @@ class MyHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR, exist_ok=True)
+        
+    # --- ATOMIC WRITE FOR INITIAL SETUP ---
     if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "w") as f: json.dump({"timestamp": "N/A", "sites": []}, f)
+        with open(TEMP_DATA_FILE, "w") as f: 
+            json.dump({"timestamp": "N/A", "sites": []}, f)
+        os.replace(TEMP_DATA_FILE, DATA_FILE)
         
     threading.Thread(target=harvest_data, daemon=True).start()
     
-    # We no longer change the directory, so Python serves index.html correctly!
     HTTPServer(('0.0.0.0', 8080), MyHandler).serve_forever()
