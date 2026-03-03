@@ -26,7 +26,8 @@ CLASSIC_PASS = os.environ.get("CLASSIC_PASS")
 DATA_DIR = "/unifi_data"
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = f"{DATA_DIR}/data.json"
-STATE_FILE = f"{DATA_DIR}/alerts.json" 
+# Renamed to v2 to force a completely clean slate without needing to delete files manually
+STATE_FILE = f"{DATA_DIR}/alerts_v2.json" 
 # ---------------------------------------
 
 POLL_INTERVAL = 300 
@@ -45,14 +46,12 @@ def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 def send_consolidated_offline_alert(site_name, devices):
-    """Sends a single Red HTML alert containing multiple offline devices for a site."""
     count = len(devices)
     s_plural = "s" if count > 1 else ""
     is_are = "are" if count > 1 else "is"
     
     subject = f"🚨 URGENT: {count} UniFi Device{s_plural} Offline - {site_name}"
     
-    # Build table rows dynamically
     table_rows = ""
     for d in devices:
         table_rows += f"""
@@ -74,7 +73,6 @@ def send_consolidated_offline_alert(site_name, devices):
             <p style="font-size: 16px; color: #444; line-height: 1.5; margin-top: 0;">
               An automated alert has been triggered by the Emerald IT UniFi Monitor. <b>{count} network device{s_plural}</b> at <strong>{site_name}</strong> {is_are} unreachable for over 8 hours.
             </p>
-            
             <table style="width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 25px; background-color: #f9f9f9; border-radius: 6px; overflow: hidden; text-align: left;">
               <tr style="background-color: #eaeaea;">
                 <th style="padding: 12px 15px; color: #444; font-size: 14px;">Device Name</th>
@@ -83,14 +81,13 @@ def send_consolidated_offline_alert(site_name, devices):
               </tr>
               {table_rows}
             </table>
-
             <h3 style="color: #222; font-size: 16px; margin-bottom: 10px; border-bottom: 2px solid #00A1E4; display: inline-block; padding-bottom: 5px;">Recommended Troubleshooting</h3>
             <ul style="color: #555; line-height: 1.6; padding-left: 20px; font-size: 14px;">
-              <li style="margin-bottom: 6px;"><b>Power Check:</b> Verify the device is receiving power (check PoE switch port, PoE injector, or mains plug).</li>
-              <li style="margin-bottom: 6px;"><b>Cabling:</b> Ensure the uplink Ethernet cable is securely connected and not damaged.</li>
+              <li style="margin-bottom: 6px;"><b>Power Check:</b> Verify the device is receiving power.</li>
+              <li style="margin-bottom: 6px;"><b>Cabling:</b> Ensure the uplink Ethernet cable is securely connected.</li>
               <li style="margin-bottom: 6px;"><b>Upstream Equipment:</b> Check if the switch port this device connects to is active.</li>
-              <li style="margin-bottom: 6px;"><b>Hard Reboot:</b> Try physically unplugging the device, waiting 10 seconds, and plugging it back in.</li>
-              <li style="margin-bottom: 6px;"><b>ISP Check:</b> If a Gateway/Router is offline, verify that the ISP modem is online.</li>
+              <li style="margin-bottom: 6px;"><b>Hard Reboot:</b> Try physically unplugging the device and plugging it back in.</li>
+              <li style="margin-bottom: 6px;"><b>ISP Check:</b> Verify that the ISP modem is online.</li>
             </ul>
           </div>
           <div style="background-color: #f1f1f1; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #eaeaea;">
@@ -103,7 +100,6 @@ def send_consolidated_offline_alert(site_name, devices):
     return send_email(subject, html_body, site_name)
 
 def send_consolidated_recovery_alert(site_name, devices):
-    """Sends a single Green HTML alert when multiple devices come back online."""
     count = len(devices)
     s_plural = "s" if count > 1 else ""
     subject = f"✅ RECOVERED: {count} UniFi Device{s_plural} Online - {site_name}"
@@ -148,7 +144,6 @@ def send_consolidated_recovery_alert(site_name, devices):
     return send_email(subject, html_body, site_name)
 
 def send_email(subject, html_body, log_identifier):
-    """Helper function to handle SMTP connection and retries."""
     msg = MIMEMultipart('alternative')
     msg['From'] = EMAIL_FROM
     msg['To'] = EMAIL_TO
@@ -254,8 +249,11 @@ def fetch_modern_unifi(alert_state, pending_offline, pending_recovery):
                             if diff_sec >= ALERT_THRESHOLD_SECONDS and alert_key not in alert_state:
                                 if name not in pending_offline: pending_offline[name] = []
                                 pending_offline[name].append({"name": dev_name, "model": dev_model, "duration": offline_str, "mac": alert_key})
-                        except: 
+                        except Exception: 
                             offline_str = ">30d"
+                            if alert_key not in alert_state:
+                                if name not in pending_offline: pending_offline[name] = []
+                                pending_offline[name].append({"name": dev_name, "model": dev_model, "duration": "> 30 days", "mac": alert_key})
                     else:
                         offline_str = ">30d"
                         if alert_key not in alert_state:
@@ -369,6 +367,9 @@ def fetch_classic_unifi(alert_state, pending_offline, pending_recovery):
                                 pending_offline[site_desc].append({"name": d_name, "model": d_model, "duration": offline_str, "mac": alert_key})
                         except Exception:
                             offline_str = ">30d"
+                            if alert_key not in alert_state:
+                                if site_desc not in pending_offline: pending_offline[site_desc] = []
+                                pending_offline[site_desc].append({"name": d_name, "model": d_model, "duration": "> 30 days", "mac": alert_key})
                     else:
                         offline_str = ">30d"
                         if alert_key not in alert_state:
@@ -430,29 +431,30 @@ def harvest_data():
     while True:
         log(">>> Starting Unified Multi-Controller Harvest...")
         
-        # Dictionaries to gather all alerts triggered in this 5-minute window
         pending_offline = {}
         pending_recovery = {}
 
         modern_cards = fetch_modern_unifi(alert_state, pending_offline, pending_recovery)
         classic_cards = fetch_classic_unifi(alert_state, pending_offline, pending_recovery)
         
-        # 1. Dispatch Consolidated Offline Emails
+        # --- NEW: Explicitly log the email queue so you can see it in Portainer ---
+        total_offline_queued = sum(len(v) for v in pending_offline.values())
+        if total_offline_queued > 0:
+            log(f"--> Queueing OFFLINE alerts for {total_offline_queued} devices across {len(pending_offline)} sites.")
+            
+        # Dispatch Consolidated Offline Emails
         for site, devices in pending_offline.items():
             if send_consolidated_offline_alert(site, devices):
-                # If email succeeds, register ALL these devices so we don't alert again
                 for d in devices:
                     alert_state[d['mac']] = datetime.now(timezone.utc).isoformat()
 
-        # 2. Dispatch Consolidated Recovery Emails
+        # Dispatch Consolidated Recovery Emails
         for site, devices in pending_recovery.items():
             if send_consolidated_recovery_alert(site, devices):
-                # If email succeeds, clear ALL these devices from the log
                 for d in devices:
                     if d['mac'] in alert_state:
                         del alert_state[d['mac']]
 
-        # Finalize and Save Data
         all_cards = modern_cards + classic_cards
         all_cards.sort(key=lambda x: (-x['IssuesCount'], x['SiteName']))
         
