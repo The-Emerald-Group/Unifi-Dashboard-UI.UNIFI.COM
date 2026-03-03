@@ -36,12 +36,14 @@ EMAIL_FROM = os.environ.get("EMAIL_FROM")
 EMAIL_TO = os.environ.get("EMAIL_TO")
 ALERT_THRESHOLD_SECONDS = 8 * 3600  # 8 Hours
 
-# --- PERMANENT DOCKER VOLUME STORAGE ---
+# --- DATA STORAGE PATHS ---
+DATA_FILE = "data.json"  # <--- Back in the main folder so index.html works!
+
+# --- PERMANENT DOCKER VOLUME STORAGE (For alerts only) ---
 DATA_DIR = "/unifi_data"
 os.makedirs(DATA_DIR, exist_ok=True)
-DATA_FILE = f"{DATA_DIR}/data.json"
 STATE_FILE = f"{DATA_DIR}/alerts_v2.json" 
-# ---------------------------------------
+# ---------------------------------------------------------
 
 POLL_INTERVAL = 300 
 ALERT_WINDOW_MINS = 240 
@@ -488,14 +490,6 @@ def harvest_data():
 
 class MyHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args): pass 
-    
-    # --- REDIRECT FIX: Send browser to data.json if they just hit the IP ---
-    def do_GET(self):
-        if self.path == '/':
-            self.path = '/data.json'
-        return SimpleHTTPRequestHandler.do_GET(self)
-    # ------------------------------------------------------------------------
-    
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -509,8 +503,5 @@ if __name__ == "__main__":
         
     threading.Thread(target=harvest_data, daemon=True).start()
     
-    # --- CHANGE DIRECTORY FIX: Server now looks in the persistent volume ---
-    os.chdir(DATA_DIR)
-    # -----------------------------------------------------------------------
-    
+    # We no longer change the directory, so Python serves index.html correctly!
     HTTPServer(('0.0.0.0', 8080), MyHandler).serve_forever()
