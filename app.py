@@ -22,6 +22,11 @@ CLASSIC_URL = os.environ.get("CLASSIC_URL")
 CLASSIC_USER = os.environ.get("CLASSIC_USER")
 CLASSIC_PASS = os.environ.get("CLASSIC_PASS")
 
+# --- EXCLUSIONS ---
+IGNORE_SITES_RAW = os.environ.get("IGNORE_SITES", "")
+# Create a clean, lowercase list of sites to ignore
+IGNORE_SITES = [s.strip().lower() for s in IGNORE_SITES_RAW.split(",") if s.strip()]
+
 # --- SMTP EMAIL CONFIGURATION ---
 SMTP_SERVER = os.environ.get("SMTP_SERVER")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", 25))
@@ -210,8 +215,12 @@ def fetch_modern_unifi(alert_state, pending_offline, pending_recovery):
         for host_group in dev_res:
             host_id = host_group.get('hostId')
             name = host_group.get('hostName') or "Unnamed Site"
-            devices_list = host_group.get('devices', [])
             
+            # --- IGNORE SITE LOGIC ---
+            if name.lower() in IGNORE_SITES:
+                continue
+                
+            devices_list = host_group.get('devices', [])
             stats = site_health_map.get(host_id, {}).get('statistics', {})
             counts = stats.get('counts', {})
             isp_name = stats.get('ispInfo', {}).get('name', '')
@@ -335,6 +344,12 @@ def fetch_classic_unifi(alert_state, pending_offline, pending_recovery):
         for site in sites_res:
             site_name = site.get('name')
             site_desc = site.get('desc', 'Unnamed Site')
+            display_name = f"{site_desc} (Cloud)"
+            
+            # --- IGNORE SITE LOGIC ---
+            # Checks against "My Site" and "My Site (Cloud)" just to be safe
+            if site_desc.lower() in IGNORE_SITES or display_name.lower() in IGNORE_SITES:
+                continue
             
             dev_res = session.get(f"{CLASSIC_URL}/api/s/{site_name}/stat/device", verify=False, timeout=15).json().get('data', [])
             if not dev_res: continue
