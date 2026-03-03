@@ -3,16 +3,27 @@ services:
     image: samuelstreets/unifi-gateway-monitor:latest
     container_name: unifi-monitor
     ports:
-      - "8081:8080"
+      - "8082:8080"
+    volumes:
+      - unifi_alert_data:/unifi_data
     environment:
       # --- Modern Site Manager (unifi.ui.com) ---
       - UNIFI_API_KEY=your_unifi_api_key_here
       
       # --- Classic Cloud Controller ---
-      - CLASSIC_URL=https://emerald.unificloud.co.uk:8443
+      - CLASSIC_URL=https://your_classic_controller_url:8443
       - CLASSIC_USER=your_local_admin_username
       - CLASSIC_PASS=your_local_admin_password
       
+      # --- SMTP Email Alerts ---
+      - SMTP_SERVER=your_smtp_ip_here
+      - SMTP_PORT=25
+      - SMTP_USER=your_smtp_username
+      - SMTP_PASS=your_smtp_password
+      - EMAIL_FROM=unifi-alerts@yourdomain.com
+      - EMAIL_TO=reports@yourdomain.com
+      
+      # --- Python Environment ---
       - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/data.json')"]
@@ -21,3 +32,7 @@ services:
       retries: 3
       start_period: 15s
     restart: always
+
+# Required to tell Docker/Portainer to manage the persistent storage
+volumes:
+  unifi_alert_data:
