@@ -314,7 +314,7 @@ def fetch_modern_unifi(alert_state, pending_offline, pending_recovery):
                     issues.append({"label": f"⚠️ {offline_devs} Device(s) Offline", "time": "Partial", "severity": "warning"})
                 
                 if active_isp:
-                    status = "Yellow"; weight = 5
+                    status = "Yellow"; weight = 15  # <--- CHANGED TO 15
                     issues.append({"label": "📡 RECENT ISP ISSUE", "time": "< 4h ago", "severity": "warning"})
 
             cards.append({
