@@ -38,13 +38,13 @@ ALERT_THRESHOLD_SECONDS = 8 * 3600  # 8 Hours
 
 # --- DATA STORAGE PATHS ---
 DATA_FILE = "data.json"
-TEMP_DATA_FILE = "data.tmp.json" # <-- Added temporary file for atomic writes
+TEMP_DATA_FILE = "data.tmp.json" 
 
 # --- PERMANENT DOCKER VOLUME STORAGE (For alerts only) ---
 DATA_DIR = "/unifi_data"
 os.makedirs(DATA_DIR, exist_ok=True)
 STATE_FILE = f"{DATA_DIR}/alerts_v2.json" 
-TEMP_STATE_FILE = f"{DATA_DIR}/alerts_v2.tmp.json" # <-- Added temporary file for atomic writes
+TEMP_STATE_FILE = f"{DATA_DIR}/alerts_v2.tmp.json"
 # ---------------------------------------------------------
 
 POLL_INTERVAL = 300 
@@ -221,7 +221,6 @@ def fetch_modern_unifi(alert_state, pending_offline, pending_recovery):
             host_id = host_group.get('hostId')
             name = host_group.get('hostName') or "Unnamed Site"
             
-            # --- IGNORE SITE LOGIC ---
             if name.lower() in IGNORE_SITES:
                 continue
                 
@@ -343,7 +342,7 @@ def fetch_modern_unifi(alert_state, pending_offline, pending_recovery):
                     
                 if historical_devs > 0 and not any(i['severity'] == 'historical' for i in issues):
                     if weight < 5: 
-                        status = "Grey"; weight = 5
+                        status = "Green"; weight = 5 # <-- Allows the card to stay green
                     issues.append({"label": f"💤 {historical_devs} Device(s) Historically Down", "time": "> 30d", "severity": "historical"})
 
             cards.append({
@@ -379,8 +378,6 @@ def fetch_classic_unifi(alert_state, pending_offline, pending_recovery):
             site_desc = site.get('desc', 'Unnamed Site')
             display_name = f"{site_desc} (Cloud)"
             
-            # --- IGNORE SITE LOGIC ---
-            # Checks against "My Site" and "My Site (Cloud)" just to be safe
             if site_desc.lower() in IGNORE_SITES or display_name.lower() in IGNORE_SITES:
                 continue
             
@@ -482,7 +479,7 @@ def fetch_classic_unifi(alert_state, pending_offline, pending_recovery):
                     
                 if historical_devs > 0 and not any(i['severity'] == 'historical' for i in issues):
                     if weight < 5: 
-                        status = "Grey"; weight = 5
+                        status = "Green"; weight = 5 # <-- Allows the card to stay green
                     issues.append({"label": f"💤 {historical_devs} Device(s) Historically Down", "time": "> 30d", "severity": "historical"})
 
             cards.append({
@@ -521,13 +518,11 @@ def harvest_data():
         if total_offline_queued > 0:
             log(f"--> Queueing OFFLINE alerts for {total_offline_queued} devices across {len(pending_offline)} sites.")
             
-        # Dispatch Consolidated Offline Emails
         for site, devices in pending_offline.items():
             if send_consolidated_offline_alert(site, devices):
                 for d in devices:
                     alert_state[d['mac']] = datetime.now(timezone.utc).isoformat()
 
-        # Dispatch Consolidated Recovery Emails
         for site, devices in pending_recovery.items():
             if send_consolidated_recovery_alert(site, devices):
                 for d in devices:
@@ -537,20 +532,15 @@ def harvest_data():
         all_cards = modern_cards + classic_cards
         all_cards.sort(key=lambda x: (-x['IssuesCount'], x['SiteName']))
         
-        # --- ATOMIC WRITE IMPLEMENTATION ---
-        # 1. Write data to a temporary file first
         with open(TEMP_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump({"timestamp": datetime.now().strftime("%H:%M:%S"), "sites": all_cards}, f, indent=4)
         
-        # 2. Instantly replace the main file with the temporary file
         os.replace(TEMP_DATA_FILE, DATA_FILE)
             
-        # Repeat the process for the state file
         with open(TEMP_STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(alert_state, f)
             
         os.replace(TEMP_STATE_FILE, STATE_FILE)
-        # -----------------------------------
             
         log(f"*** HARVEST SUCCESS: Processed {len(modern_cards)} Modern + {len(classic_cards)} Classic sites ***")
         time.sleep(POLL_INTERVAL)
@@ -566,7 +556,6 @@ if __name__ == "__main__":
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR, exist_ok=True)
         
-    # --- ATOMIC WRITE FOR INITIAL SETUP ---
     if not os.path.exists(DATA_FILE):
         with open(TEMP_DATA_FILE, "w") as f: 
             json.dump({"timestamp": "N/A", "sites": []}, f)
